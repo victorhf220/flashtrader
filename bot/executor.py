@@ -1,6 +1,6 @@
 import logging
 import json
-from typing import Tuple
+from typing import Tuple, Optional
 from web3 import Web3
 from eth_account import Account
 
@@ -16,6 +16,15 @@ from config import (
     MARKET_CATEGORY_MAP,
 )
 from database.db import save_operation
+
+# Importa API com tratamento de erro
+try:
+    from polymarket_api import get_polymarket_api
+    POLYMARKET_API_AVAILABLE = True
+except ImportError:
+    logger = logging.getLogger(__name__)
+    logger.warning("polymarket_api não disponível, usando spreads estimados")
+    POLYMARKET_API_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -381,3 +390,35 @@ class ContractExecutor:
         logger.info(f"Lucro bruto: ${gross_profit:.2f} - Taxa: {fee_percent}% (${fee_amount:.2f}) = Líquido: ${net_profit:.2f}")
         
         return max(0, net_profit)  # Não pode ser negativo
+    
+    def get_real_spread(self, market_id: str, market_name: str, default: float = 0.05) -> float:
+        """
+        Obtém spread REAL de um mercado via Polymarket API
+        Fallback para spread estimado se API não responder
+        
+        Args:
+            market_id: ID do mercado (endereço)
+            market_name: Nome do mercado para logging
+            default: Spread padrão se não conseguir (ex: 0.05 = 5%)
+        
+        Returns:
+            Spread real ou estimado em percentual
+        """
+        if not POLYMARKET_API_AVAILABLE:
+            logger.debug(f"API não disponível, usando spread estimado: {default:.2%}")
+            return default
+        
+        try:
+            api = get_polymarket_api()
+            spread = api.get_spread(market_id, default=default)
+            
+            if spread and spread > 0:
+                logger.info(f"Spread REAL obtido para {market_name}: {spread:.2%}")
+                return spread
+            else:
+                logger.warning(f"Spread inválido para {market_name}, usando estimado: {default:.2%}")
+                return default
+        
+        except Exception as e:
+            logger.warning(f"Erro ao obter spread real para {market_name}: {e}. Usando estimado: {default:.2%}")
+            return default
