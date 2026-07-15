@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel Arbitrage - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+        }
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .status-online {
+            background-color: #10b981;
+        }
+        .status-offline {
+            background-color: #ef4444;
+        }
+        .card {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+        }
+        th {
+            background: rgba(15, 23, 42, 0.5);
+            font-weight: 600;
+        }
+        tr:hover {
+            background: rgba(148, 163, 184, 0.1);
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+        }
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.2);
+            color: #f59e0b;
+        }
+        .badge-error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+        .badge-pending {
+            background: rgba(59, 130, 246, 0.2);
+            color: #3b82f6;
+        }
+    </style>
+</head>
+<body class="text-gray-100">
+    <div class="min-h-screen p-8">
+        <!-- Header -->
+        <div class="max-w-7xl mx-auto">
+            <div class="flex justify-between items-center mb-8">
+                <div>
+                    <h1 class="text-4xl font-bold text-white mb-2">Sentinel Arbitrage</h1>
+                    <p class="text-gray-400">Bot de Flash Loan + Sentiment Trading</p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <div id="status-indicator" class="w-4 h-4 status-offline rounded-full pulse"></div>
+                        <span id="status-text" class="text-sm">Offline</span>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-sm text-gray-400">Última atualização</p>
+                        <p id="last-update" class="text-sm font-mono">--:--:--</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metrics Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <!-- Lucro Total -->
+                <div class="card p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm mb-1">Lucro Total</p>
+                            <p id="lucro-total" class="text-3xl font-bold text-green-400">$0.00</p>
+                        </div>
+                        <div class="text-4xl text-green-400 opacity-20">💰</div>
+                    </div>
+                </div>
+
+                <!-- Lucro Hoje -->
+                <div class="card p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm mb-1">Lucro Hoje</p>
+                            <p id="lucro-dia" class="text-3xl font-bold text-blue-400">$0.00</p>
+                        </div>
+                        <div class="text-4xl text-blue-400 opacity-20">📈</div>
+                    </div>
+                </div>
+
+                <!-- Operações Hoje -->
+                <div class="card p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm mb-1">Operações Hoje</p>
+                            <p id="ops-dia" class="text-3xl font-bold text-purple-400">0</p>
+                        </div>
+                        <div class="text-4xl text-purple-400 opacity-20">⚡</div>
+                    </div>
+                </div>
+
+                <!-- Média por Operação -->
+                <div class="card p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-gray-400 text-sm mb-1">Média/Op</p>
+                            <p id="media-lucro" class="text-3xl font-bold text-yellow-400">$0.00</p>
+                        </div>
+                        <div class="text-4xl text-yellow-400 opacity-20">📊</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gráfico de Lucro Acumulado -->
+            <div class="card p-6 mb-8">
+                <h2 class="text-xl font-bold text-white mb-4">Lucro Acumulado (30 dias)</h2>
+                <div class="chart-container">
+                    <canvas id="profit-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Últimas Operações -->
+            <div class="card p-6">
+                <h2 class="text-xl font-bold text-white mb-4">Últimas Operações</h2>
+                <div class="overflow-x-auto">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Hora</th>
+                                <th>Mercado</th>
+                                <th>Direção</th>
+                                <th>Score</th>
+                                <th>Lucro</th>
+                                <th>Status</th>
+                                <th>Detalhes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="operations-table">
+                            <tr>
+                                <td colspan="7" class="text-center py-8 text-gray-400">
+                                    Carregando operações...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="text-center mt-12 text-gray-500 text-sm">
+                <p>Sentinel Arbitrage Dashboard • Atualizado em tempo real</p>
+                <p class="mt-2">⚠️ AVISO: Este bot opera com transações reais. Use com cuidado e sempre em DRY_RUN antes de produção.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
