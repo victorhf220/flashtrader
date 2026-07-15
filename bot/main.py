@@ -125,21 +125,25 @@ class SentinelBot:
             return {}
     
     def execute_trades(self, sentiments: dict):
-        """Executa trades baseado em sentimentos"""
+        """Executa trades baseado em sentimentos com consideração de taxas dinâmicas"""
         executed = 0
         
         for term, score in sentiments.items():
             try:
+                # Detecta categoria e calcula taxas
+                fee_taker, _ = self.executor.get_category_fee(term)
+                
                 # BUY (YES) - sentimento positivo
                 if score > SCORE_LIMIAR:
-                    logger.info(f"🟢 Sinal de COMPRA para {term} (score: {score:+.3f})")
+                    logger.info(f"🟢 Sinal de COMPRA para {term} (score: {score:+.3f}, taxa: {fee_taker}%)")
                     # Aqui você integraria com o Polymarket para obter endereço do mercado
                     # Por enquanto, apenas simula
                     success, tx_hash = self.executor.execute_arbitrage(
                         market="0x" + "0" * 40,  # Placeholder - usar endereço real
                         outcome=1,  # YES
                         sentiment_score=score,
-                        estimated_spread=0.05
+                        estimated_spread=0.05,
+                        market_name=term  # Passa nome para detectar categoria e taxas
                     )
                     
                     if success:
@@ -150,12 +154,13 @@ class SentinelBot:
                 
                 # SELL (NO) - sentimento negativo
                 elif score < -SCORE_LIMIAR:
-                    logger.info(f"🔴 Sinal de VENDA para {term} (score: {score:+.3f})")
+                    logger.info(f"🔴 Sinal de VENDA para {term} (score: {score:+.3f}, taxa: {fee_taker}%)")
                     success, tx_hash = self.executor.execute_arbitrage(
                         market="0x" + "0" * 40,  # Placeholder - usar endereço real
                         outcome=0,  # NO
                         sentiment_score=score,
-                        estimated_spread=0.05
+                        estimated_spread=0.05,
+                        market_name=term  # Passa nome para detectar categoria e taxas
                     )
                     
                     if success:

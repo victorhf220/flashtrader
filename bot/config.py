@@ -46,6 +46,48 @@ SENTIMENT_WEIGHTS = {
     "news": 0.25,
 }
 
+# ===== TAXAS DINÂMICAS POLYMARKET (Março 2026) =====
+# Referência: https://docs.polymarket.com/fees
+POLYMARKET_CATEGORY_FEES = {
+    # Categoria: (fee_taker%, fee_maker%)
+    "geopolitics": (0.0, 0.0),      # 0% - Promoção especial
+    "esports": (0.75, 0.0),          # 0.75% taker, 0% maker
+    "crypto": (1.8, 0.0),            # 1.8% taker, 0% maker
+    "sports": (0.75, 0.0),           # 0.75% taker, 0% maker
+    "elections": (0.5, 0.0),         # 0.5% taker, 0% maker
+    "economics": (1.0, 0.0),         # 1.0% taker, 0% maker
+    "weather": (2.0, 0.0),           # 2.0% taker, 0% maker
+    "science": (1.5, 0.0),           # 1.5% taker, 0% maker
+    "entertainment": (1.5, 0.0),     # 1.5% taker, 0% maker
+    "default": (2.0, 0.0),           # 2.0% para categorias não listadas
+}
+
+# Mapeamento alternativo de categoria (por nome de mercado)
+MARKET_CATEGORY_MAP = {
+    "bitcoin": "crypto",
+    "ethereum": "crypto",
+    "btc": "crypto",
+    "eth": "crypto",
+    "sol": "crypto",
+    "solana": "crypto",
+    "trump": "elections",
+    "biden": "elections",
+    "election": "elections",
+    "election 2024": "elections",
+    "election 2026": "elections",
+    "nfl": "sports",
+    "nba": "sports",
+    "world cup": "sports",
+    "olympics": "sports",
+    "fed rate": "economics",
+    "inflation": "economics",
+    "unemployment": "economics",
+    "gdp": "economics",
+    "hurricane": "weather",
+    "earthquake": "weather",
+    "temperature": "weather",
+}
+
 # ===== URLs POLYMARKET =====
 POLYMARKET_CLOB_URL = "https://clob.polymarket.com"
 POLYMARKET_API_URL = "https://polymarket.com/api"

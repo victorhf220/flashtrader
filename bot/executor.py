@@ -12,6 +12,8 @@ from config import (
     CAPITAL_POR_OP,
     SPREAD_MINIMO,
     DRY_RUN,
+    POLYMARKET_CATEGORY_FEES,
+    MARKET_CATEGORY_MAP,
 )
 from database.db import save_operation
 
@@ -117,37 +119,46 @@ class ContractExecutor:
         outcome: int,
         sentiment_score: float,
         estimated_spread: float = 0.05,
+        market_name: str = None,
     ) -> Tuple[bool, str]:
         """
-        Executa arbitrage via flash loan
+        Executa arbitrage via flash loan com cálculo de taxas dinâmicas
         
         Args:
             market: Endereço do mercado Polymarket
             outcome: 0 = NO, 1 = YES
             sentiment_score: Score agregado de sentimento
             estimated_spread: Spread estimado entre compra e venda
+            market_name: Nome do mercado (para detectar categoria e taxas)
         
         Returns:
             (success, tx_hash ou erro_message)
         """
         
+        # Se não recebeu market_name, usa market como fallback
+        if not market_name:
+            market_name = market
+        
         if DRY_RUN:
             logger.info(f"[DRY RUN] Arbitrage seria executado:")
-            logger.info(f"  Market: {market}")
+            logger.info(f"  Market: {market_name}")
             logger.info(f"  Outcome: {outcome}")
             logger.info(f"  Sentiment: {sentiment_score:.3f}")
             logger.info(f"  Capital: ${CAPITAL_POR_OP}")
             
-            # Simula sucesso
-            estimated_profit = CAPITAL_POR_OP * estimated_spread * 0.8  # 80% do spread
+            # Calcula lucro com taxas dinâmicas
+            gross_profit = CAPITAL_POR_OP * estimated_spread * 0.8  # 80% do spread
+            net_profit = self.calculate_profit_after_fees(gross_profit, market_name, position_side="taker")
+            
+            fee_taker, _ = self.get_category_fee(market_name)
             
             save_operation(
-                termo=market,
+                termo=market_name,
                 direction="YES" if outcome == 1 else "NO",
                 score=sentiment_score,
-                lucro=estimated_profit,
+                lucro=net_profit,
                 status="DRY_RUN",
-                detalhes=f"Spread estimado: {estimated_spread:.2%}, Lucro estimado: ${estimated_profit:.2f}"
+                detalhes=f"Spread: {estimated_spread:.2%}, Bruto: ${gross_profit:.2f}, Taxa: {fee_taker}%, Líquido: ${net_profit:.2f}"
             )
             
             return True, "DRY_RUN_SUCCESS"
@@ -165,9 +176,19 @@ class ContractExecutor:
             return False, error
         
         try:
-            # Calcula profit mínimo esperado
-            estimated_profit = CAPITAL_POR_OP * estimated_spread * 0.7  # 70% do spread (após fees)
-            min_profit = int(estimated_profit * 0.9)  # 90% do estimado como mínimo
+            # Calcula profit mínimo esperado com taxas dinâmicas
+            gross_profit = CAPITAL_POR_OP * estimated_spread * 0.7  # 70% do spread
+            net_profit = self.calculate_profit_after_fees(gross_profit, market_name or market, position_side="taker")
+            min_profit = int(net_profit * 0.9)  # 90% do estimado como mínimo
+            
+            # Log detalhado de cálculo de lucro
+            fee_taker, _ = self.get_category_fee(market_name or market)
+            logger.info(f"Cálculo de lucro esperado:")
+            logger.info(f"  Spread: {estimated_spread:.2%}")
+            logger.info(f"  Lucro bruto: ${gross_profit:.2f}")
+            logger.info(f"  Taxa: {fee_taker}%")
+            logger.info(f"  Lucro líquido: ${net_profit:.2f}")
+            logger.info(f"  Min profit (90%): ${min_profit}mwei (${min_profit/1e6:.2f})")
             
             # Prepara transação
             market_checksum = Web3.to_checksum_address(market)
@@ -289,3 +310,74 @@ class ContractExecutor:
             return self.w3.is_connected()
         except:
             return False
+    
+    def detect_market_category(self, market_name: str) -> str:
+        """
+        Detecta a categoria de um mercado baseado no nome
+        Retorna a categoria para lookup de taxas
+        
+        Args:
+            market_name: Nome do mercado (ex: "Bitcoin", "Trump 2026", "Fed Rate")
+        
+        Returns:
+            categoria: String da categoria (ex: "crypto", "elections", "economics")
+        """
+        market_lower = market_name.lower().strip()
+        
+        # Busca exata no mapa
+        if market_lower in MARKET_CATEGORY_MAP:
+            return MARKET_CATEGORY_MAP[market_lower]
+        
+        # Busca parcial (substring)
+        for market_key, category in MARKET_CATEGORY_MAP.items():
+            if market_key in market_lower or market_lower in market_key:
+                logger.info(f"Categoria detectada por substring: {market_name} → {category}")
+                return category
+        
+        logger.warning(f"Categoria não detectada para '{market_name}', usando default")
+        return "default"
+    
+    def get_category_fee(self, market_name: str) -> tuple:
+        """
+        Obtém a taxa de um mercado baseado em sua categoria
+        
+        Args:
+            market_name: Nome do mercado
+        
+        Returns:
+            (fee_taker%, fee_maker%): Tupla com as taxas em percentual
+        """
+        category = self.detect_market_category(market_name)
+        fees = POLYMARKET_CATEGORY_FEES.get(category, POLYMARKET_CATEGORY_FEES["default"])
+        
+        logger.info(f"Taxas para {market_name} ({category}): Taker={fees[0]}%, Maker={fees[1]}%")
+        return fees
+    
+    def calculate_profit_after_fees(
+        self,
+        gross_profit: float,
+        market_name: str,
+        position_side: str = "taker"
+    ) -> float:
+        """
+        Calcula lucro líquido após taxas dinâmicas da Polymarket
+        
+        Args:
+            gross_profit: Lucro bruto (antes de taxas)
+            market_name: Nome do mercado
+            position_side: "taker" ou "maker" (afeta qual taxa é aplicada)
+        
+        Returns:
+            net_profit: Lucro líquido após taxas
+        """
+        fee_taker, fee_maker = self.get_category_fee(market_name)
+        
+        # Seleciona taxa apropriada (em arbitrage, geralmente somos taker)
+        fee_percent = fee_taker if position_side == "taker" else fee_maker
+        fee_amount = gross_profit * (fee_percent / 100.0)
+        
+        net_profit = gross_profit - fee_amount
+        
+        logger.info(f"Lucro bruto: ${gross_profit:.2f} - Taxa: {fee_percent}% (${fee_amount:.2f}) = Líquido: ${net_profit:.2f}")
+        
+        return max(0, net_profit)  # Não pode ser negativo
