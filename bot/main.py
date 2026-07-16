@@ -17,6 +17,8 @@ from config import (
     PAUSA_APOS_MUITOS_ERROS,
     LOG_DIR,
     LOG_FILE,
+    MARKET_ADDRESSES,  # ← NOVO
+    DEFAULT_MARKET_ADDRESS,  # ← NOVO
 )
 from sentiment import SentimentAnalyzer
 from executor import ContractExecutor
@@ -130,16 +132,23 @@ class SentinelBot:
         
         for term, score in sentiments.items():
             try:
+                # ← NOVO: Procura endereço real do mercado no mapeamento
+                market_address = MARKET_ADDRESSES.get(term.lower())
+                
+                # Se não encontrar endereço configurado, pula este mercado
+                if not market_address or market_address == "0x" + "0"*40:
+                    logger.warning(f"⚠️  Mercado '{term}' sem endereço configurado. "
+                                 f"Configure em config.py::MARKET_ADDRESSES antes de usar.")
+                    continue
+                
                 # Detecta categoria e calcula taxas
                 fee_taker, _ = self.executor.get_category_fee(term)
                 
                 # BUY (YES) - sentimento positivo
                 if score > SCORE_LIMIAR:
                     logger.info(f"🟢 Sinal de COMPRA para {term} (score: {score:+.3f}, taxa: {fee_taker}%)")
-                    # Aqui você integraria com o Polymarket para obter endereço do mercado
-                    # Por enquanto, apenas simula
                     success, tx_hash = self.executor.execute_arbitrage(
-                        market="0x" + "0" * 40,  # Placeholder - usar endereço real
+                        market=market_address,  # ← CORRIGIDO: Usa endereço real
                         outcome=1,  # YES
                         sentiment_score=score,
                         estimated_spread=0.05,
@@ -156,7 +165,7 @@ class SentinelBot:
                 elif score < -SCORE_LIMIAR:
                     logger.info(f"🔴 Sinal de VENDA para {term} (score: {score:+.3f}, taxa: {fee_taker}%)")
                     success, tx_hash = self.executor.execute_arbitrage(
-                        market="0x" + "0" * 40,  # Placeholder - usar endereço real
+                        market=market_address,  # ← CORRIGIDO: Usa endereço real
                         outcome=0,  # NO
                         sentiment_score=score,
                         estimated_spread=0.05,

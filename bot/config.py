@@ -88,6 +88,38 @@ MARKET_CATEGORY_MAP = {
     "temperature": "weather",
 }
 
+# ===== ENDEREÇOS DE MERCADOS POLYMARKET (CTF) =====
+# Esses são exemplos - SUBSTITUA pelos endereços reais de seus mercados
+# Encontre em: https://polymarket.com ou https://clob.polymarket.com/markets
+MARKET_ADDRESSES = {
+    # Exemplo de mercados (SUBSTITUA pelos seus):
+    # Geopolitics (0% fee - PRIORIDADE!)
+    "putin ukraine": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "taiwan invasion": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    
+    # Elections
+    "trump 2024": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "biden": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "election 2024": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    
+    # Crypto (1.8% fee - evitar)
+    "bitcoin": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "ethereum": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "bitcoin 100k": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    
+    # Sports
+    "nfl": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "world cup": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    
+    # Economics
+    "fed rate": "0x" + "0"*40,  # TODO: Adicionar endereço real
+    "inflation": "0x" + "0"*40,  # TODO: Adicionar endereço real
+}
+
+# Endereço padrão para mercados não configurados (opcional)
+# Se vazio, o bot pula mercados sem endereço configurado
+DEFAULT_MARKET_ADDRESS = None
+
 # ===== URLs POLYMARKET =====
 POLYMARKET_CLOB_URL = "https://clob.polymarket.com"
 POLYMARKET_API_URL = "https://polymarket.com/api"

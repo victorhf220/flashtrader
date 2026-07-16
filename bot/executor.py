@@ -1,5 +1,6 @@
 import logging
 import json
+import threading  # ← NOVO: Para lock de nonce
 from typing import Tuple, Optional
 from web3 import Web3
 from eth_account import Account
@@ -61,6 +62,7 @@ class ContractExecutor:
         self.account = Account.from_key(PRIVATE_KEY) if PRIVATE_KEY else None
         self.contract = self._load_contract()
         self.nonce_cache = None
+        self.nonce_lock = threading.Lock()  # ← NOVO: Proteção contra race condition
         
     def _init_web3(self) -> Web3:
         """Inicializa conexão Web3 com fallback"""
@@ -121,6 +123,32 @@ class ContractExecutor:
         except Exception as e:
             logger.warning(f"Erro ao obter gas price: {e}")
             return self.w3.to_wei(50, 'gwei'), self.w3.to_wei(2, 'gwei')
+    
+    def _get_safe_nonce(self) -> int:
+        """Obtém nonce de forma segura (com lock para evitar race condition)
+        
+        Race condition: Se múltiplas transações tentam obter nonce simultaneamente,
+        podem obter o mesmo valor e causar colisão.
+        Solução: Use lock para garantir que apenas uma thread acessa por vez.
+        """
+        with self.nonce_lock:
+            # Obtém nonce atual da blockchain
+            current_nonce = self.w3.eth.get_transaction_count(self.account.address)
+            
+            # Se cache é None, inicializa com o valor atual
+            if self.nonce_cache is None:
+                self.nonce_cache = current_nonce
+            
+            # Se cache está atrás (transações foram minadas), atualiza
+            if self.nonce_cache < current_nonce:
+                self.nonce_cache = current_nonce
+            
+            # Usa nonce do cache e incrementa para próxima vez
+            nonce_to_use = self.nonce_cache
+            self.nonce_cache += 1
+            
+            logger.debug(f"Nonce: {nonce_to_use} (cache agora: {self.nonce_cache})")
+            return nonce_to_use
     
     def execute_arbitrage(
         self,
@@ -209,7 +237,7 @@ class ContractExecutor:
                 min_profit
             ).build_transaction({
                 'from': self.account.address,
-                'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                'nonce': self._get_safe_nonce(),  # ← CORRIGIDO: Usa lock para evitar race condition
                 'chainId': 137,  # Polygon mainnet
             })
             
@@ -248,7 +276,7 @@ class ContractExecutor:
                         termo=market,
                         direction="YES" if outcome == 1 else "NO",
                         score=sentiment_score,
-                        lucro=estimated_profit,
+                        lucro=net_profit,  # ← CORRIGIDO: usar net_profit calculado acima
                         status="SUCCESS",
                         detalhes=f"TxHash: {tx_hash_hex}, GasUsed: {receipt['gasUsed']}"
                     )

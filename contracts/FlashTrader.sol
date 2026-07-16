@@ -54,6 +54,8 @@ contract FlashTrader is IFlashLoanSimpleReceiver {
         address market;
         uint256 outcome;
         uint256 minProfit;
+        uint256 minShares;      // ← NOVO: Proteção contra slippage na compra
+        uint256 minProceeds;    // ← NOVO: Proteção contra slippage na venda
     }
     
     modifier onlyOwner() {
@@ -76,15 +78,21 @@ contract FlashTrader is IFlashLoanSimpleReceiver {
         address market,
         uint256 outcome,
         uint256 flashAmount,
-        uint256 minProfit
+        uint256 minProfit,
+        uint256 minShares,      // ← NOVO: Mínimo de shares a comprar
+        uint256 minProceeds     // ← NOVO: Mínimo de USDC ao vender
     ) external onlyOwner {
         require(flashAmount > 0, "Invalid flash amount");
+        require(minShares > 0, "Invalid minShares");
+        require(minProceeds > 0, "Invalid minProceeds");
         
         bytes memory params = abi.encode(
             ArbitrageData({
                 market: market,
                 outcome: outcome,
-                minProfit: minProfit
+                minProfit: minProfit,
+                minShares: minShares,
+                minProceeds: minProceeds
             })
         );
         
@@ -113,7 +121,7 @@ contract FlashTrader is IFlashLoanSimpleReceiver {
         bool success = false;
         uint256 profit = 0;
         
-        try this._executeArbitrageLogic(data.market, data.outcome, amount) returns (uint256 proceeds) {
+        try this._executeArbitrageLogic(data.market, data.outcome, amount, data.minShares, data.minProceeds) returns (uint256 proceeds) {
             if (proceeds > amountOwed) {
                 profit = proceeds - amountOwed;
                 lastProfit = profit;
@@ -137,28 +145,32 @@ contract FlashTrader is IFlashLoanSimpleReceiver {
     function _executeArbitrageLogic(
         address market,
         uint256 outcome,
-        uint256 amount
+        uint256 amount,
+        uint256 minShares,
+        uint256 minProceeds
     ) external returns (uint256) {
         ICTFExchange exchange = ICTFExchange(market);
         
-        // Compra shares com o flash loan
+        // Compra shares com o flash loan (com proteção de slippage)
         uint256 sharesReceived = exchange.buyShares(
             market,
             outcome,
-            0, // minShares = 0 (aceita qualquer quantidade)
+            minShares,  // ← AGORA: Rejeita se receber menos shares que o esperado
             amount
         );
         
+        require(sharesReceived >= minShares, "Slippage too high on buy");
         require(sharesReceived > 0, "Failed to buy shares");
         
-        // Vende as shares imediatamente (arbitrage)
+        // Vende as shares imediatamente (arbitrage, com proteção de slippage)
         uint256 proceeds = exchange.sellShares(
             market,
             outcome,
             sharesReceived,
-            0 // minProceeds = 0 (aceita qualquer valor)
+            minProceeds  // ← AGORA: Rejeita se receber menos USDC que o esperado
         );
         
+        require(proceeds >= minProceeds, "Slippage too high on sell");
         require(proceeds > 0, "Failed to sell shares");
         
         return proceeds;
