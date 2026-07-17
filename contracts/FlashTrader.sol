@@ -6,6 +6,16 @@ import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAd
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
 
+/// ⚠️ AVISO CRÍTICO (16/07/2026): A interface ICTFExchange abaixo é uma
+/// simplificação FICTÍCIA criada para fins de estrutura de código. A Polymarket
+/// real NÃO expõe funções públicas `buyShares`/`sellShares` que qualquer contrato
+/// possa chamar diretamente. O CTFExchange real da Polymarket usa um modelo de
+/// "operator-driven order matching": ordens são assinadas off-chain (EIP-712)
+/// por maker e taker, e um operator autorizado da própria Polymarket as
+/// submete via `matchOrders()`. Não há como um contrato de terceiros comprar/
+/// vender shares chamando essas funções - elas simplesmente não existem no
+/// contrato real (0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E na Polygon).
+/// Ver POLYMARKET_ONCHAIN_LIMITACAO.md para detalhes e caminho recomendado.
 interface ICTFExchange {
     function buyShares(
         address market,
@@ -34,7 +44,11 @@ contract FlashTrader is IFlashLoanSimpleReceiver {
     address public immutable OWNER;
     
     IERC20 public constant USDC = IERC20(0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174); // Polygon USDC
-    address public constant AAVE_POOL = 0x794a61a3DcA442b1A4B8bE2A6dff2f3dFb8C8b1; // Polygon Aave V3
+    // NOTA: o endereço do Aave Pool NÃO é hardcoded aqui de propósito.
+    // POOL é resolvido dinamicamente via ADDRESSES_PROVIDER.getPool() no constructor,
+    // que é o padrão recomendado pela Aave (o proxy do Pool pode ser atualizado pela
+    // Aave Governance; resolver dinamicamente garante que o contrato sempre aponte
+    // para o Pool correto sem precisar de redeploy).
     
     uint256 public lastProfit;
     uint256 public totalOperations;

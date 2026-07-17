@@ -136,6 +136,38 @@ class TestPolymarketAPI:
         assert len(market.outcomes) == 2
         assert market.volume_24h == 50000
     
+    def test_parse_market_real_api_format(self, api):
+        """
+        Testa parsing contra o formato REAL retornado por gamma-api.polymarket.com
+        (capturado ao vivo em 16/07/2026 - ver SECURITY_AUDIT_SENTINEL_BOT.md).
+        
+        A API real difere do formato idealizado: outcomes/outcomePrices vêm como
+        strings JSON separadas (não lista de objetos), o campo de volume é
+        "volume24hr" (não "volume24h"), e existe um campo "spread" direto no
+        payload que deve ser preferido a uma estimativa derivada dos outcomes.
+        """
+        raw_data = {
+            "id": "540817",
+            "question": "New Rihanna Album before GTA VI?",
+            "outcomes": '["Yes", "No"]',
+            "outcomePrices": '["0.535", "0.465"]',
+            "volume": "723525.1657010033",
+            "liquidity": "15606.5878",
+            "volume24hr": 1654.7418570000002,
+            "spread": 0.01,
+            "bestBid": 0.53,
+            "bestAsk": 0.54,
+        }
+        
+        market = api._parse_market(raw_data)
+        
+        assert market is not None
+        assert market.market_id == "540817"
+        assert market.outcomes == {"Yes": 0.535, "No": 0.465}
+        assert market.spread == 0.01  # Deve usar o campo direto, não estimar
+        assert abs(market.volume_24h - 1654.74) < 0.01
+        assert abs(market.liquidity - 15606.5878) < 0.01
+    
     def test_parse_market_invalid_id(self, api):
         """Testa parsing com ID inválido"""
         raw_data = {

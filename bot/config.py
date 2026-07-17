@@ -30,9 +30,10 @@ INTERVALO = int(os.getenv("INTERVALO", "60"))  # Segundos entre scans
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 CATEGORIA = os.getenv("CATEGORIA", "geopolitics")  # Para taxa zero no Polymarket
 MERCADOS = os.getenv("MERCADOS", "BTC,ETH,SOL").split(",")
+SLIPPAGE_TOLERANCE = float(os.getenv("SLIPPAGE_TOLERANCE", "0.02"))  # 2% tolerância de slippage (proteção)
 
 # ===== CACHE E LIMITE =====
-CACHE_SENTIMENTO_TTL = 300  # 5 minutos
+CACHE_SENTIMENTO_TTL = int(os.getenv("CACHE_SENTIMENTO_TTL", "300"))  # 5 minutos (configurável)
 MAX_ERROS_CONSECUTIVOS = 2
 PAUSA_APOS_ERROS = 600  # 10 minutos
 MAX_ERROS_TOTAL = 3

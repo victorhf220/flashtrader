@@ -7,6 +7,7 @@ Referência: https://docs.polymarket.com/api
 """
 
 import logging
+import json
 import requests
 from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass, field
@@ -144,6 +145,12 @@ class PolymarketAPI:
     def _clean_cache(self):
         """Limpa cache se exceder limite de tamanho"""
         if len(self.market_cache) > MAX_CACHE_SIZE:
+            # Garante que toda chave no cache tenha timestamp - protege contra
+            # entradas órfãs que impediriam a limpeza de funcionar corretamente
+            for key in self.market_cache:
+                if key not in self.cache_timestamp:
+                    self.cache_timestamp[key] = datetime.min
+            
             # Remove as 10% entradas mais antigas
             oldest_keys = sorted(
                 self.cache_timestamp.items(),
@@ -264,7 +271,17 @@ class PolymarketAPI:
                 return []
             
             markets = []
-            market_list = data.get("data", []) or data.get("markets", [])
+            
+            # A API real da Polymarket (Gamma) retorna uma lista JSON diretamente,
+            # mas outras variantes/versões podem envelopar em {"data": [...]} ou {"markets": [...]}
+            # Tratamos os dois formatos por segurança.
+            if isinstance(data, list):
+                market_list = data
+            elif isinstance(data, dict):
+                market_list = data.get("data", []) or data.get("markets", [])
+            else:
+                logger.error(f"Formato de resposta inesperado: {type(data)}")
+                return []
             
             if not isinstance(market_list, list):
                 logger.error(f"Resposta não é uma lista: {type(market_list)}")
@@ -602,9 +619,33 @@ class PolymarketAPI:
             category = str(market_data.get("category", "default")).lower().strip()
             
             # Parse outcomes com validação
+            # A API real da Polymarket retorna "outcomes" e "outcomePrices" como
+            # strings JSON separadas (ex: '["Yes","No"]' e '["0.53","0.47"]'),
+            # não como lista de objetos {name, probability}. Tratamos os dois formatos.
             outcomes = {}
             outcomes_raw = market_data.get("outcomes", [])
-            if isinstance(outcomes_raw, list):
+            prices_raw = market_data.get("outcomePrices", [])
+            
+            try:
+                if isinstance(outcomes_raw, str):
+                    outcomes_raw = json.loads(outcomes_raw)
+                if isinstance(prices_raw, str):
+                    prices_raw = json.loads(prices_raw)
+            except (json.JSONDecodeError, TypeError):
+                outcomes_raw, prices_raw = [], []
+            
+            if isinstance(outcomes_raw, list) and isinstance(prices_raw, list) and len(outcomes_raw) == len(prices_raw):
+                # Formato real da API: nomes e preços em arrays paralelos
+                for name, price in zip(outcomes_raw, prices_raw):
+                    try:
+                        name = str(name).strip()
+                        prob = float(price)
+                        if name and 0 <= prob <= 1:
+                            outcomes[name] = prob
+                    except (ValueError, TypeError):
+                        continue
+            elif isinstance(outcomes_raw, list):
+                # Formato alternativo: lista de objetos {name, probability}
                 for outcome in outcomes_raw:
                     try:
                         if isinstance(outcome, dict):
@@ -615,16 +656,23 @@ class PolymarketAPI:
                     except (ValueError, TypeError):
                         continue
             
-            # Calcula spread aproximado
-            if outcomes and len(outcomes) >= 2:
-                probs = list(outcomes.values())
-                spread = max(0, abs(max(probs) - min(probs)))
-            else:
-                spread = 0.02  # Default
+            # Extrai spread: usa o campo direto da API quando disponível (mais preciso),
+            # senão estima pela diferença entre probabilidades dos outcomes
+            try:
+                if "spread" in market_data:
+                    spread = float(market_data.get("spread", 0.02))
+                elif outcomes and len(outcomes) >= 2:
+                    probs = list(outcomes.values())
+                    spread = max(0, abs(max(probs) - min(probs)))
+                else:
+                    spread = 0.02  # Default
+            except (ValueError, TypeError):
+                spread = 0.02
             
             # Extrai volume e liquidity com validação
+            # NOTA: campo real da API é "volume24hr" (não "volume24h")
             try:
-                volume_24h = float(market_data.get("volume24h", 0))
+                volume_24h = float(market_data.get("volume24hr", market_data.get("volume24h", 0)))
                 liquidity = float(market_data.get("liquidity", 0))
             except (ValueError, TypeError):
                 volume_24h = 0.0

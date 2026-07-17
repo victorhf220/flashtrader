@@ -15,6 +15,7 @@ from config import (
     DRY_RUN,
     POLYMARKET_CATEGORY_FEES,
     MARKET_CATEGORY_MAP,
+    SLIPPAGE_TOLERANCE,
 )
 from database.db import save_operation
 
@@ -38,7 +39,9 @@ FLASH_TRADER_ABI = json.loads('''[
             {"name": "market", "type": "address"},
             {"name": "outcome", "type": "uint256"},
             {"name": "flashAmount", "type": "uint256"},
-            {"name": "minProfit", "type": "uint256"}
+            {"name": "minProfit", "type": "uint256"},
+            {"name": "minShares", "type": "uint256"},
+            {"name": "minProceeds", "type": "uint256"}
         ],
         "outputs": [],
         "stateMutability": "nonpayable"
@@ -150,6 +153,67 @@ class ContractExecutor:
             logger.debug(f"Nonce: {nonce_to_use} (cache agora: {self.nonce_cache})")
             return nonce_to_use
     
+    def _calculate_slippage_bounds(self, market: str, outcome: int, amount_usdc: float) -> Optional[Tuple[int, int]]:
+        """
+        Calcula minShares e minProceeds usando o order book REAL da Polymarket,
+        aplicando a tolerância de slippage configurada (SLIPPAGE_TOLERANCE).
+        
+        Retorna None se não conseguir dados confiáveis - por segurança, é melhor
+        NÃO executar o trade do que arriscar com limites arbitrários.
+        
+        Args:
+            market: Endereço do mercado
+            outcome: 0 (NO) ou 1 (YES)
+            amount_usdc: Quantidade de USDC a ser usada na compra
+        
+        Returns:
+            (minShares em wei, minProceeds em wei) ou None se dados não confiáveis
+        """
+        if not POLYMARKET_API_AVAILABLE:
+            logger.error("API Polymarket indisponível - não é possível calcular proteção de slippage com segurança")
+            return None
+        
+        try:
+            api = get_polymarket_api()
+            book = api.get_order_book(market, outcome)
+            
+            if not book.get('is_valid'):
+                logger.warning(f"Order book inválido/indisponível para {market}:{outcome} - abortando por segurança")
+                return None
+            
+            best_ask = book['best_ask']  # Preço de compra (0-1)
+            best_bid = book['best_bid']  # Preço de venda (0-1)
+            
+            if best_ask <= 0 or best_bid <= 0:
+                logger.warning(f"Preços inválidos no order book: ask={best_ask}, bid={best_bid}")
+                return None
+            
+            # Shares esperadas ao comprar 'amount_usdc' ao preço best_ask
+            expected_shares = amount_usdc / best_ask
+            # Proceeds esperados ao vender essas shares ao preço best_bid
+            expected_proceeds = expected_shares * best_bid
+            
+            # Aplica tolerância de slippage (ex: 2% abaixo do esperado)
+            min_shares = expected_shares * (1 - SLIPPAGE_TOLERANCE)
+            min_proceeds = expected_proceeds * (1 - SLIPPAGE_TOLERANCE)
+            
+            # Converte para unidades do contrato (6 decimais, igual USDC)
+            min_shares_wei = int(min_shares * 1e6)
+            min_proceeds_wei = int(min_proceeds * 1e6)
+            
+            logger.info(
+                f"Slippage bounds calculados com dados REAIS: "
+                f"ask={best_ask:.3f} bid={best_bid:.3f} | "
+                f"minShares={min_shares:.2f} minProceeds=${min_proceeds:.2f} "
+                f"(tolerância: {SLIPPAGE_TOLERANCE:.1%})"
+            )
+            
+            return min_shares_wei, min_proceeds_wei
+        
+        except Exception as e:
+            logger.error(f"Erro ao calcular limites de slippage: {e}")
+            return None
+    
     def execute_arbitrage(
         self,
         market: str,
@@ -176,6 +240,9 @@ class ContractExecutor:
         if not market_name:
             market_name = market
         
+        # ← CORRIGIDO: Busca spread REAL via Polymarket API (antes só usava o valor fixo recebido)
+        real_spread = self.get_real_spread(market, market_name, default=estimated_spread)
+        
         if DRY_RUN:
             logger.info(f"[DRY RUN] Arbitrage seria executado:")
             logger.info(f"  Market: {market_name}")
@@ -183,8 +250,8 @@ class ContractExecutor:
             logger.info(f"  Sentiment: {sentiment_score:.3f}")
             logger.info(f"  Capital: ${CAPITAL_POR_OP}")
             
-            # Calcula lucro com taxas dinâmicas
-            gross_profit = CAPITAL_POR_OP * estimated_spread * 0.8  # 80% do spread
+            # Calcula lucro com taxas dinâmicas (usando spread REAL quando disponível)
+            gross_profit = CAPITAL_POR_OP * real_spread * 0.8  # 80% do spread
             net_profit = self.calculate_profit_after_fees(gross_profit, market_name, position_side="taker")
             
             fee_taker, _ = self.get_category_fee(market_name)
@@ -195,7 +262,7 @@ class ContractExecutor:
                 score=sentiment_score,
                 lucro=net_profit,
                 status="DRY_RUN",
-                detalhes=f"Spread: {estimated_spread:.2%}, Bruto: ${gross_profit:.2f}, Taxa: {fee_taker}%, Líquido: ${net_profit:.2f}"
+                detalhes=f"Spread: {real_spread:.2%}, Bruto: ${gross_profit:.2f}, Taxa: {fee_taker}%, Líquido: ${net_profit:.2f}"
             )
             
             return True, "DRY_RUN_SUCCESS"
@@ -207,25 +274,50 @@ class ContractExecutor:
             save_operation(market, "YES" if outcome == 1 else "NO", sentiment_score, 0, "ERROR", error)
             return False, error
         
-        if estimated_spread < SPREAD_MINIMO:
-            error = f"Spread insuficiente: {estimated_spread:.2%} < {SPREAD_MINIMO:.2%}"
+        if real_spread < SPREAD_MINIMO:
+            error = f"Spread insuficiente: {real_spread:.2%} < {SPREAD_MINIMO:.2%}"
             logger.warning(error)
             return False, error
         
         try:
             # Calcula profit mínimo esperado com taxas dinâmicas
-            gross_profit = CAPITAL_POR_OP * estimated_spread * 0.7  # 70% do spread
+            gross_profit = CAPITAL_POR_OP * real_spread * 0.7  # 70% do spread
             net_profit = self.calculate_profit_after_fees(gross_profit, market_name or market, position_side="taker")
+            
+            # ← NOVO: Gate explícito de lucratividade. Antes, se a taxa da categoria
+            # consumisse todo o spread, net_profit virava 0 (calculate_profit_after_fees
+            # já faz max(0, ...)) e o trade seguia adiante com min_profit=0 - ou seja,
+            # a taxa dinâmica influenciava o número mas não IMPEDIA operações não lucrativas.
+            # Agora abortamos explicitamente quando não sobra lucro real após taxas.
+            if net_profit <= 0:
+                fee_taker, _ = self.get_category_fee(market_name or market)
+                error = (f"Não lucrativo após taxas: spread bruto {real_spread:.2%} "
+                         f"consumido pela taxa de {fee_taker}% da categoria - trade abortado")
+                logger.warning(error)
+                save_operation(market, "YES" if outcome == 1 else "NO", sentiment_score, 0, "SKIPPED", error)
+                return False, error
+            
             min_profit = int(net_profit * 0.9)  # 90% do estimado como mínimo
             
             # Log detalhado de cálculo de lucro
             fee_taker, _ = self.get_category_fee(market_name or market)
             logger.info(f"Cálculo de lucro esperado:")
-            logger.info(f"  Spread: {estimated_spread:.2%}")
+            logger.info(f"  Spread: {real_spread:.2%}")
             logger.info(f"  Lucro bruto: ${gross_profit:.2f}")
             logger.info(f"  Taxa: {fee_taker}%")
             logger.info(f"  Lucro líquido: ${net_profit:.2f}")
             logger.info(f"  Min profit (90%): ${min_profit}mwei (${min_profit/1e6:.2f})")
+            
+            # ← NOVO: Calcula proteção de slippage com dados REAIS do order book
+            slippage_bounds = self._calculate_slippage_bounds(market, outcome, CAPITAL_POR_OP)
+            
+            if slippage_bounds is None:
+                error = "Sem dados de mercado confiáveis para proteção de slippage - trade abortado por segurança"
+                logger.error(error)
+                save_operation(market, "YES" if outcome == 1 else "NO", sentiment_score, 0, "ERROR", error)
+                return False, error
+            
+            min_shares_wei, min_proceeds_wei = slippage_bounds
             
             # Prepara transação
             market_checksum = Web3.to_checksum_address(market)
@@ -234,7 +326,9 @@ class ContractExecutor:
                 market_checksum,
                 outcome,
                 self.w3.to_wei(CAPITAL_POR_OP, 'mwei'),  # USDC usa 6 decimals (mwei)
-                min_profit
+                min_profit,
+                min_shares_wei,     # ← NOVO: Proteção de slippage na compra
+                min_proceeds_wei    # ← NOVO: Proteção de slippage na venda
             ).build_transaction({
                 'from': self.account.address,
                 'nonce': self._get_safe_nonce(),  # ← CORRIGIDO: Usa lock para evitar race condition
