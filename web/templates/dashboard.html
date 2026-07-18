@@ -97,6 +97,42 @@
                 </div>
             </div>
 
+            <!-- Checklist de Configuração -->
+            <div class="card p-6 mb-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-white">⚙️ Status da Configuração</h2>
+                    <span id="producao-badge" class="badge badge-warning">Verificando...</span>
+                </div>
+                <div id="config-checklist" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+                    <div class="text-center text-gray-400 col-span-5 py-4">Carregando...</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm border-t border-gray-700 pt-4">
+                    <div>
+                        <p class="text-gray-400">Carteira</p>
+                        <p id="config-wallet" class="font-mono text-gray-200">-</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-400">Saldo MATIC/POL (gas)</p>
+                        <p id="config-balance" class="font-mono text-gray-200">-</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-400">Contrato DexArbitrage</p>
+                        <p id="config-contract" class="font-mono text-gray-200">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Oportunidade DEX ao Vivo -->
+            <div class="card p-6 mb-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold text-white">🔎 Oportunidade DEX Ao Vivo</h2>
+                    <span class="text-xs text-gray-400">QuickSwap ⇄ SushiSwap · atualiza a cada 15s</span>
+                </div>
+                <div id="dex-scan-content" class="text-gray-400 text-center py-6">
+                    Consultando preços on-chain...
+                </div>
+            </div>
+
             <!-- Metrics Cards -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <!-- Lucro Total -->
