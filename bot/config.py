@@ -10,6 +10,21 @@ PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
 CONTRACT_ADDRESS = os.getenv("CONTRACT_ADDRESS", "")
 AAVE_POOL_PROVIDER = "0xA97684ead0e402dC232d5A977953DF7ECBaB3CDb"  # Polygon Aave Provider
 
+# ===== FASTLANE (MEV / anti-front-running na Polygon) =====
+# ⚠️ Aplicável à arbitragem DEX-a-DEX real (Uniswap/QuickSwap), NÃO ao fluxo
+# atual de Polymarket em FlashTrader.sol, que já foi documentado como
+# inviável on-chain (ver POLYMARKET_ONCHAIN_LIMITACAO.md). Ver avisos
+# completos em bot/fastlane_client.py antes de habilitar em produção.
+USE_FASTLANE = os.getenv("USE_FASTLANE", "false").lower() == "true"
+FASTLANE_RELAY_URL = os.getenv("FASTLANE_RELAY_URL", "https://relay.fastlane.xyz")
+# Lance mínimo/máximo em MATIC (wei) que o bot está disposto a ofertar no
+# leilão do FastLane pela prioridade de inclusão. Ajuste com base no lucro
+# líquido esperado da operação (o lance não pode "comer" o lucro).
+FASTLANE_MIN_BID_WEI = int(os.getenv("FASTLANE_MIN_BID_WEI", str(int(0.001 * 1e18))))
+FASTLANE_MAX_BID_WEI = int(os.getenv("FASTLANE_MAX_BID_WEI", str(int(0.05 * 1e18))))
+# Quantos blocos de deadline dar à SolverOperation antes que ela expire
+FASTLANE_DEADLINE_BLOCKS = int(os.getenv("FASTLANE_DEADLINE_BLOCKS", "5"))
+
 # ===== API KEYS =====
 TWITTER_BEARER = os.getenv("TWITTER_BEARER", "")
 REDDIT_CLIENT = os.getenv("REDDIT_CLIENT", "")

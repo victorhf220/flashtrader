@@ -16,8 +16,14 @@ from config import (
     POLYMARKET_CATEGORY_FEES,
     MARKET_CATEGORY_MAP,
     SLIPPAGE_TOLERANCE,
+    USE_FASTLANE,
+    FASTLANE_RELAY_URL,
+    FASTLANE_MIN_BID_WEI,
+    FASTLANE_MAX_BID_WEI,
+    FASTLANE_DEADLINE_BLOCKS,
 )
 from database.db import save_operation
+from fastlane_client import FastLaneClient
 
 # Importa API com tratamento de erro
 try:
@@ -66,6 +72,19 @@ class ContractExecutor:
         self.contract = self._load_contract()
         self.nonce_cache = None
         self.nonce_lock = threading.Lock()  # ← NOVO: Proteção contra race condition
+
+        # ← NOVO: Cliente FastLane (submissão protegida contra front-running).
+        # Aplicável a arbitragem DEX real via flash loan; NÃO resolve o
+        # problema do fluxo Polymarket, que é inviável on-chain independente
+        # de como a tx é submetida (ver POLYMARKET_ONCHAIN_LIMITACAO.md).
+        self.fastlane = None
+        if USE_FASTLANE and self.account:
+            try:
+                self.fastlane = FastLaneClient(self.w3, PRIVATE_KEY, FASTLANE_RELAY_URL)
+                logger.info("Cliente FastLane inicializado")
+            except Exception as e:
+                logger.warning(f"Falha ao inicializar cliente FastLane, seguindo sem ele: {e}")
+                self.fastlane = None
         
     def _init_web3(self) -> Web3:
         """Inicializa conexão Web3 com fallback"""
@@ -418,6 +437,62 @@ class ContractExecutor:
             
             return False, error
     
+    def send_transaction(self, tx_data: dict, solver_contract_address: str) -> Tuple[bool, str]:
+        """
+        Assina e envia uma transação já montada (via .build_transaction()),
+        tentando primeiro o relay do FastLane (submissão protegida contra
+        front-running) e caindo de volta para o RPC público em caso de falha
+        ou quando USE_FASTLANE=false.
+
+        ⚠️ Use este método para transações de arbitragem DEX real (ex: um
+        futuro contrato Uniswap/QuickSwap flash-loan). NÃO USE para o fluxo
+        atual de Polymarket em FlashTrader.sol — aquele reverte
+        independentemente do canal de submissão (ver
+        POLYMARKET_ONCHAIN_LIMITACAO.md e os avisos em fastlane_client.py).
+
+        Args:
+            tx_data: dict retornado por contract.functions.X(...).build_transaction({...}),
+                     já com nonce, gas, maxFeePerGas etc. preenchidos.
+            solver_contract_address: endereço do contrato que executa a
+                     arbitragem (usado como 'solver' na SolverOperation).
+
+        Returns:
+            (success, tx_hash_ou_mensagem_de_erro)
+        """
+        if self.fastlane:
+            try:
+                current_block = self.w3.eth.block_number
+                op = self.fastlane.build_solver_operation(
+                    solver_contract=solver_contract_address,
+                    calldata=tx_data.get("data", b""),
+                    bid_amount_wei=FASTLANE_MIN_BID_WEI,
+                    deadline_block=current_block + FASTLANE_DEADLINE_BLOCKS,
+                    max_fee_per_gas=tx_data.get("maxFeePerGas", 0),
+                    gas_limit=tx_data.get("gas", 500_000),
+                )
+                result = self.fastlane.submit(op)
+                if result.get("success"):
+                    logger.info("Transação submetida via FastLane com sucesso")
+                    return True, str(result.get("detail"))
+                logger.warning(
+                    f"Submissão via FastLane falhou ({result.get('detail')}), "
+                    f"caindo para RPC público"
+                )
+            except Exception as e:
+                logger.warning(f"Erro ao submeter via FastLane, caindo para RPC público: {e}")
+
+        # Fallback: envio normal via RPC público (comportamento original)
+        try:
+            signed_tx = self.w3.eth.account.sign_transaction(tx_data, PRIVATE_KEY)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            tx_hash_hex = tx_hash.hex()
+            logger.info(f"Transação enviada via RPC público: {tx_hash_hex}")
+            return True, tx_hash_hex
+        except Exception as e:
+            error = f"Erro ao enviar transação via RPC público: {e}"
+            logger.error(error)
+            return False, error
+
     def get_contract_stats(self) -> dict:
         """Obtém estatísticas do contrato"""
         try:
