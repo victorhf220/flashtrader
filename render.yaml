@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: flashtrader-bot
+    env: docker
+    plan: free
+    autoDeploy: true
+    
+    # Variáveis de ambiente (configure no Render dashboard)
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DRY_RUN
+        value: "true"
+      - key: LOG_DIR
+        value: logs
+    
+    # Healthcheck
+    healthCheckPath: /health
+    
+    # Limite de recursos
+    disk:
+      name: flashtrader-data
+      mountPath: /data
+      sizeGB: 1
+    
+    # Horário de deploy
+    preDeployCommand: "mkdir -p logs"
+    
+    # Comando de execução
+    startCommand: "python bot/main.py"
+    
+    # Timeout
+    startTimeout: 60
