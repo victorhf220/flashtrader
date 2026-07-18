@@ -1,6 +1,38 @@
 # Sentinel Arbitrage Bot
 
-Bot de arbitragem automatizado que combina **análise de sentimento multi-source** com **flash loans da Aave** para execução de trades no **Polymarket**.
+Bot de arbitragem automatizado que combina **análise de sentimento multi-source** com **flash loans da Aave** para execução de trades.
+
+## 🏗️ Arquitetura Atual (atualizado em 18/07/2026)
+
+O bot tem **dois caminhos distintos**, e é importante não confundi-los:
+
+| Caminho | Contrato | Status | Move capital real? |
+|---|---|---|---|
+| **Arbitragem DEX** (QuickSwap ⇄ SushiSwap) | `contracts/DexArbitrage.sol` | ✅ Funcional — swaps em AMM são atômicos e determinísticos | **Sim**, via flash loan Aave V3 |
+| **Sinal Polymarket** (sentimento multi-source) | `contracts/FlashTrader.sol` (legado) | ⚠️ Apenas informativo/observação | **Não** — ver `POLYMARKET_ONCHAIN_LIMITACAO.md` |
+
+O contrato original `FlashTrader.sol` foi desenhado para comprar/vender shares
+da Polymarket dentro do callback do flash loan, mas isso **não é possível
+on-chain**: a Polymarket usa um modelo de order-matching operado off-chain
+pela própria Polymarket, sem função pública de compra/venda que um contrato
+de terceiro possa chamar. Esse fluxo sempre reverteria em mainnet — por isso
+`main.py` continua rodando a análise de sentimento e registrando os sinais
+(útil como dado/observação), mas quem efetivamente dispara flash loans e
+move capital é o `DexArbitrageExecutor` (`bot/dex_executor.py`), que arbitra
+entre QuickSwap e SushiSwap via `contracts/DexArbitrage.sol` — um padrão
+onde flash loans realmente se aplicam, porque swaps em AMM são atômicos.
+
+**Para rodar 100% funcional (sem DRY_RUN), falta apenas:**
+1. Compilar e deployar `contracts/DexArbitrage.sol` na Polygon mainnet (`deploy.py` ou Remix/Hardhat), usando `AAVE_POOL_PROVIDER` já configurado em `config.py`.
+2. Colocar o endereço do contrato deployado em `DEX_ARBITRAGE_CONTRACT_ADDRESS` no `.env`.
+3. Financiar a carteira do bot com MATIC/POL (só para gas — o capital de giro vem do flash loan).
+4. Rodar em `DRY_RUN=true` por alguns dias observando os logs de `scan_dex_arbitrage()`, depois desligar o DRY_RUN.
+5. (Opcional, recomendado) Habilitar `USE_FASTLANE=true` e revisar os endereços/endpoint em `bot/fastlane_client.py` contra a doc oficial antes de ligar de vez.
+
+Se quiser reativar a perna Polymarket com execução real (não apenas sinal),
+o caminho documentado é usar `py-clob-client` com capital próprio da
+carteira (não flash loan) — ver `POLYMARKET_ONCHAIN_LIMITACAO.md` e
+`OPCAO_C_HYBRID_GUIDE.md`.
 
 ## 🎯 Características
 

@@ -19,9 +19,11 @@ from config import (
     LOG_FILE,
     MARKET_ADDRESSES,  # ← NOVO
     DEFAULT_MARKET_ADDRESS,  # ← NOVO
+    DEX_ARBITRAGE_CONTRACT_ADDRESS,
 )
 from sentiment import SentimentAnalyzer
 from executor import ContractExecutor
+from dex_executor import DexArbitrageExecutor
 from database.db import db, calculate_metrics, get_latest_metrics
 
 # ===== LOGGING =====
@@ -42,6 +44,14 @@ class SentinelBot:
     def __init__(self):
         self.sentiment_analyzer = SentimentAnalyzer()
         self.executor = ContractExecutor()
+        # ← NOVO: Caminho de arbitragem DEX real (QuickSwap x SushiSwap via
+        # flash loan), que substitui o fluxo de "arbitragem" Polymarket como
+        # a estratégia que efetivamente move capital — ver
+        # POLYMARKET_ONCHAIN_LIMITACAO.md para o motivo. A análise de
+        # sentimento sobre a Polymarket continua rodando abaixo como sinal
+        # informativo, mas não dispara mais flash loan (o que sempre
+        # reverteria contra o contrato real da Polymarket).
+        self.dex_executor = DexArbitrageExecutor(self.executor)
         self.erros_consecutivos = 0
         self.total_erros = 0
         self.ultima_execucao = None
@@ -50,9 +60,15 @@ class SentinelBot:
         
         logger.info("=" * 80)
         logger.info("SENTINEL ARBITRAGE BOT INICIALIZADO")
-        logger.info(f"Mercados: {MERCADOS}")
+        logger.info(f"Mercados (sinal de sentimento): {MERCADOS}")
         logger.info(f"Intervalo: {INTERVALO}s")
         logger.info(f"Score Limiar: {SCORE_LIMIAR}")
+        if not DEX_ARBITRAGE_CONTRACT_ADDRESS:
+            logger.warning(
+                "⚠️  DEX_ARBITRAGE_CONTRACT_ADDRESS não configurado — "
+                "arbitragem DEX real desativada até o deploy do contrato "
+                "(ver contracts/DexArbitrage.sol)"
+            )
         logger.info("=" * 80)
     
     def healthcheck(self) -> bool:
@@ -187,6 +203,36 @@ class SentinelBot:
         
         return False
     
+    def scan_dex_arbitrage(self):
+        """
+        Escaneia e executa arbitragem DEX real (QuickSwap x SushiSwap) via
+        flash loan. Este é o caminho que efetivamente move capital — ao
+        contrário do fluxo Polymarket, este é atômico e funciona de verdade
+        on-chain (ver contracts/DexArbitrage.sol).
+        """
+        try:
+            opportunity = self.dex_executor.scan_opportunity()
+            if not opportunity:
+                logger.debug("Nenhuma oportunidade de arbitragem DEX no momento")
+                return False
+
+            logger.info(
+                f"💰 Oportunidade DEX encontrada: spread bruto "
+                f"{opportunity['gross_spread']:.3%}"
+            )
+            success, result = self.dex_executor.execute(opportunity)
+
+            if success:
+                logger.info(f"✓ Arbitragem DEX executada: {result}")
+                self.reset_errors()
+            else:
+                logger.warning(f"✗ Arbitragem DEX falhou: {result}")
+
+            return success
+        except Exception as e:
+            self.handle_error(f"Erro ao escanear arbitragem DEX: {e}")
+            return False
+
     def print_status(self):
         """Imprime status do bot"""
         metrics = calculate_metrics()
@@ -229,7 +275,7 @@ class SentinelBot:
                 logger.info(f"ITERAÇÃO #{iteration} - {datetime.now().isoformat()}")
                 logger.info(f"{'='*80}")
                 
-                # Analisa mercados
+                # Analisa mercados (sinal de sentimento — informativo)
                 sentiments = self.analyze_markets()
                 
                 if not sentiments:
@@ -237,8 +283,13 @@ class SentinelBot:
                     time.sleep(INTERVALO)
                     continue
                 
-                # Executa trades
+                # Executa trades Polymarket (mantido para registro/observação;
+                # ver aviso no __init__ sobre por que não move capital real)
                 self.execute_trades(sentiments)
+
+                # ← NOVO: Arbitragem DEX real — este é o caminho que efetivamente
+                # busca lucro via flash loan hoje.
+                self.scan_dex_arbitrage()
                 
                 self.ultima_execucao = datetime.now()
                 
